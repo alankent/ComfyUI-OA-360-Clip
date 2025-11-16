@@ -1,0 +1,11 @@
+[project]
+name = "ComfyUI-OA-360-Clip"
+version = "1.0.0"
+description = "A ComfyUI custom node for extracting perspective views from 360° equirectangular images"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = []
+
+[project.optional-dependencies]
+dev = []
+
