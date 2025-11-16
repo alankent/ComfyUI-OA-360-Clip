@@ -2,6 +2,8 @@
 
 A ComfyUI custom node for extracting perspective views from 360° equirectangular images with an interactive drag-and-drop crop interface.
 
+Why? Because I want to do camera shots from different angles with a consistent background. One way to do that is to generate a 360 image, then take background snips from that image. But you need to undo the curviture introduced by 360 photos, hence this extension.
+
 ## Features
 
 - **360° Image Support**: Extract perspective views from equirectangular 360° images using gnomonic projection
@@ -71,18 +73,8 @@ The crop region is controlled entirely through the interactive UI:
 - **Crop Constraints**: Maximum crop width is 25% of input image width
 - **State Management**: Crop values are stored in node properties and synchronized with the backend via API
 
-## License
+## Acknowledgements
 
-Copyright 2024
+This project was inspired by the [ComfyUI-Olm-DragCrop](https://github.com/olm-comfyui/ComfyUI-Olm-DragCrop) extension, which provides an excellent interactive crop interface for ComfyUI. However, this is a clean implementation written from scratch, as the original extension's license was not permissive enough for our needs. This project was vibe coded with Cursor AI from scratch (and it took a while even then to get right!)
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+If you need to clip a rectangular region from a standard (non-360°) image, we recommend using the [ComfyUI-Olm-DragCrop](https://github.com/olm-comfyui/ComfyUI-Olm-DragCrop) extension instead, which is specifically designed for that use case.
