@@ -857,7 +857,7 @@ app.registerExtension({
           if (!wasLoaded) {
             this.imageLoaded = false;
           }
-          console.warn("[OA360Clip] Image failed to load");
+          // Silently handle image load failures - gracefully fall back to old image or show placeholder
           this.setDirtyCanvas(true);
         };
 
@@ -934,34 +934,6 @@ app.registerExtension({
         data.extra.crop_center_y = crop_center_y;
         data.extra.crop_width = crop_width;
         data.extra.crop_height = crop_height;
-        
-        // Debug logging removed - serialize() is called frequently by ComfyUI for auto-save
-        // This is normal behavior, no need to log every call
-      }
-      
-      // Also send crop data to backend via API endpoint for immediate access
-      // This ensures the backend has the values before execution
-      // Only send if we have valid crop values (same validation as above)
-      if (this.id && hasValidImage && 
-          crop_center_x !== undefined && crop_center_y !== undefined &&
-          crop_width !== undefined && crop_height !== undefined &&
-          crop_center_x >= 0 && crop_center_x < imgWidth * 10 &&
-          crop_center_y >= 0 && crop_center_y <= imgHeight &&
-          crop_width > 0 && crop_width <= imgWidth * 0.25 &&
-          crop_height > 0 && crop_height <= imgHeight) {
-        // Normalize crop_center_x for API call too
-        const normalizedCenterX = ((crop_center_x % imgWidth) + imgWidth) % imgWidth;
-        fetch(app.api.apiURL("/oa360clip/set_crop"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            node_id: this.id,
-            crop_center_x: normalizedCenterX,
-            crop_center_y: crop_center_y,
-            crop_width: crop_width,
-            crop_height: crop_height,
-          })
-        }).catch(err => console.warn("[OA360Clip] Failed to send crop data:", err));
       }
       
       return data;
@@ -1114,22 +1086,8 @@ app.registerExtension({
         this.originalCropLeft = newCenterX - cropWidth / 2;
         this.originalCropTop = newCenterY - cropHeight / 2;
         
-        // Send updated crop data to backend immediately
-        if (this.id) {
-          fetch(app.api.apiURL("/oa360clip/set_crop"), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              node_id: this.id,
-              crop_center_x: this.properties.crop_center_x,
-              crop_center_y: this.properties.crop_center_y,
-              crop_width: this.properties.crop_width,
-              crop_height: this.properties.crop_height,
-            })
-          }).catch(() => {});
-        }
-        
         // Mark node as changed to trigger re-execution
+        // Crop data will be sent to backend when prompt is queued (via queue hook below)
         this.setDirtyCanvas(true);
         if (this.graph) {
           this.graph.setDirtyCanvas(true);
@@ -1411,35 +1369,7 @@ app.registerExtension({
       }
       
       if (this.dragging) {
-        // Send crop data to backend when drag ends (not during dragging to avoid race conditions)
-        const imgWidth = this.properties.actualImageWidth || 0;
-        const imgHeight = this.properties.actualImageHeight || 0;
-        if (this.id && imgWidth > 0 && imgHeight > 0 && (
-          this.properties.crop_center_x !== undefined ||
-          this.properties.crop_center_y !== undefined ||
-          this.properties.crop_width !== undefined ||
-          this.properties.crop_height !== undefined
-        )) {
-          // Normalize crop_center_x for API call
-          const crop_center_x = this.properties.crop_center_x;
-          let normalizedCenterX = crop_center_x;
-          if (crop_center_x !== undefined && imgWidth > 0) {
-            normalizedCenterX = ((crop_center_x % imgWidth) + imgWidth) % imgWidth;
-          }
-          
-          fetch(app.api.apiURL("/oa360clip/set_crop"), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              node_id: this.id,
-              crop_center_x: normalizedCenterX,
-              crop_center_y: this.properties.crop_center_y,
-              crop_width: this.properties.crop_width,
-              crop_height: this.properties.crop_height,
-            })
-          }).catch(() => {});
-        }
-        
+        // Crop data will be sent to backend when prompt is queued (via queue hook below)
         this.dragging = false;
         this.dragMode = null;
         this.dragCornerIndex = undefined;
@@ -1459,4 +1389,116 @@ app.registerExtension({
     };
   },
 });
+
+// Hook into prompt queue to send crop data right before execution
+// Hook into app.api.queuePrompt like other extensions do
+(function() {
+  // Wait for app to be available
+  if (typeof app === "undefined" || !app.api) {
+    // Try again after a short delay
+    setTimeout(arguments.callee, 100);
+    return;
+  }
+  
+  // Hook into api.queuePrompt
+  if (app.api.queuePrompt && !app.api._oa360clip_queue_hooked) {
+    app.api._oa360clip_queue_hooked = true;
+    const originalQueuePrompt = app.api.queuePrompt.bind(app.api);
+    
+    app.api.queuePrompt = async function(number, prompt) {
+      // Extract nodes from the prompt/workflow
+      if (prompt && prompt.workflow) {
+        const workflow = prompt.workflow;
+        sendCropDataFromWorkflow(workflow);
+      } else if (prompt) {
+        // Prompt might be the workflow directly
+        sendCropDataFromWorkflow(prompt);
+      }
+      
+      // Also check current graph for nodes (in case workflow doesn't have the data)
+      if (app.graph) {
+        sendCropDataFromGraph(app.graph);
+      }
+      
+      // Call original queuePrompt
+      return originalQueuePrompt.apply(this, arguments);
+    };
+  }
+  
+  // Function to send crop data from workflow object
+  function sendCropDataFromWorkflow(workflow) {
+    if (!workflow) return;
+    
+    for (const nodeId in workflow) {
+      const node = workflow[nodeId];
+      if (node && node.class_type === "OA360Clip") {
+        const extra = node.extra || {};
+        const cropData = {
+          crop_center_x: extra.crop_center_x,
+          crop_center_y: extra.crop_center_y,
+          crop_width: extra.crop_width,
+          crop_height: extra.crop_height,
+        };
+        
+        if (cropData.crop_center_x !== undefined || cropData.crop_center_y !== undefined ||
+            cropData.crop_width !== undefined || cropData.crop_height !== undefined) {
+          sendCropDataToBackend(nodeId, cropData);
+        }
+      }
+    }
+  }
+  
+  // Function to send crop data from graph nodes
+  function sendCropDataFromGraph(graph) {
+    if (!graph) return;
+    
+    const nodes = graph._nodes || graph.nodes || [];
+    
+    for (const n of nodes) {
+      if (n.type === "OA360Clip" && n.id) {
+        const imgWidth = n.properties?.actualImageWidth || 0;
+        const imgHeight = n.properties?.actualImageHeight || 0;
+        
+        if (imgWidth > 0 && imgHeight > 0 && (
+          n.properties?.crop_center_x !== undefined ||
+          n.properties?.crop_center_y !== undefined ||
+          n.properties?.crop_width !== undefined ||
+          n.properties?.crop_height !== undefined
+        )) {
+          // Normalize crop_center_x for API call
+          const crop_center_x = n.properties.crop_center_x;
+          let normalizedCenterX = crop_center_x;
+          if (crop_center_x !== undefined && imgWidth > 0) {
+            normalizedCenterX = ((crop_center_x % imgWidth) + imgWidth) % imgWidth;
+          }
+          
+          const cropData = {
+            crop_center_x: normalizedCenterX,
+            crop_center_y: n.properties.crop_center_y,
+            crop_width: n.properties.crop_width,
+            crop_height: n.properties.crop_height,
+          };
+          
+          sendCropDataToBackend(n.id, cropData);
+        }
+      }
+    }
+  }
+  
+  // Function to send crop data to backend
+  function sendCropDataToBackend(nodeId, cropData) {
+    const payload = {
+      node_id: nodeId,
+      ...cropData
+    };
+    
+    fetch(app.api.apiURL("/oa360clip/set_crop"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }).catch(() => {
+      // Silently ignore errors - backend can fall back to workflow's extra data
+    });
+  }
+})();
 
