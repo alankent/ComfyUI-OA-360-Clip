@@ -4,6 +4,8 @@ A ComfyUI custom node for extracting perspective views from 360° equirectangula
 
 Why? Because I want to do camera shots from different angles with a consistent background. One way to do that is to generate a 360 image, then take background snips from that image. But you need to undo the curviture introduced by 360 photos, hence this extension.
 
+Why the OA prefix? I go by "Ordinary Alan" (username: xordinary99) on the [ComfyUI Discord server](https://discord.gg/comfyui).
+
 ## Features
 
 - **360° Image Support**: Extract perspective views from equirectangular 360° images using gnomonic projection
